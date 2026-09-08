@@ -1,17 +1,16 @@
 import os
-from langchain_community.document_loaders import TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import DashScopeEmbeddings
-from langchain_community.vectorstores import Chroma
-from langchain_community.chat_models import ChatTongyi
+from langchain_chroma import Chroma
 from pathlib import Path
 import hashlib
+from langchain_core.documents import Document
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 """LLM初始化"""
 
 
 def build_llm():
-    LLM_1 = ChatTongyi(
+    LLM_1 = ChatOpenAI(
         model="qwen-max",
         api_key=os.getenv("DASHSCOPE_API_KEY"),
         base_url="https://ws-k66usu35y908m0bq.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
@@ -23,9 +22,11 @@ def build_llm():
 
 
 def build_embeddings():
-    llm_embeddings = DashScopeEmbeddings(
+    llm_embeddings = OpenAIEmbeddings(
         model="qwen3.7-text-embedding",
-        dashscope_api_key=os.getenv("DASHSCOPE_API_KEY"),
+        api_key=os.getenv("DASHSCOPE_API_KEY"),
+        base_url="https://ws-k66usu35y908m0bq.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+        check_embedding_ctx_length=False,
     )
     return llm_embeddings
 
@@ -45,10 +46,9 @@ def load_and_split():
     target_dir = Path(__file__).parent / "notes"
     docs1 = []
     for file_path in sorted(target_dir.glob("*.md")):
-        loader = TextLoader(str(file_path), encoding="utf-8")
-        docs = loader.load()
-        for doc in docs:
-            doc.metadata["source"] = file_path.name
+        content = file_path.read_text(encoding="utf-8")
+        docs = [Document(page_content=content,
+                         metadata={"source": file_path.name})]
         docs1.extend(docs)
 
     text_splitter = RecursiveCharacterTextSplitter(
