@@ -100,11 +100,12 @@ def rag_answer(question, vector_store, llm):
         k=3,
     )
 
-    texts = []
+    texts_blocks = []
     for doc in results:
-        texts.append(doc.page_content)
+        sources = doc.metadata.get("source")
+        texts_blocks.append(f"【来源】：{sources}\n{doc.page_content}")
 
-    context = "\n\n".join(texts)
+    context = "\n\n".join(texts_blocks)
 
     if not results:
         return "报意思呀~~未能检索到相关内容喏~~~笔记里暂时没有相关内容捏~~~"
@@ -115,6 +116,7 @@ def rag_answer(question, vector_store, llm):
         prompt = f"""
         请根据下面的内容或者知识,总结性地、详细地回答用户的问题。
         只能依据"知识内容"回答；如果知识内容不足以回答这个问题，就直说"笔记里没有相关内容"，不许编造。
+        回答结束时单独列一行"参考来源"，只能写它实际引用的【来源】标签里的文件名，没用到的不许写。
     
         知识内容：
         {context}
