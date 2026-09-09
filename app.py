@@ -5,8 +5,14 @@ from pathlib import Path
 import hashlib
 from langchain_core.documents import Document
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from typing import TypedDict
+from langgraph.graph import StateGraph, START, END
 
-"""LLM初始化"""
+
+class RAGState(TypedDict):
+    question: str
+    answer: str
+    context: str
 
 
 def build_llm():
@@ -16,9 +22,6 @@ def build_llm():
         base_url="https://ws-k66usu35y908m0bq.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
     )
     return LLM_1
-
-
-"""embedding model 初始化"""
 
 
 def build_embeddings():
@@ -94,39 +97,58 @@ def get_vector_store(split_docs, embeddings):
     return vectorstore
 
 
-def rag_answer(question, vector_store, llm):
-    results = vector_store.similarity_search(
-        question,
-        k=3,
-    )
+def build_graph(vector_store, llm):
+    def retrieve_node(state):
+        question = state["question"]
 
-    texts_blocks = []
-    for doc in results:
-        sources = doc.metadata.get("source")
-        texts_blocks.append(f"【来源】：{sources}\n{doc.page_content}")
+        results = vector_store.similarity_search(
+            question,
+            k=3,
+        )
+        texts_blocks = []
+        for doc in results:
+            sources = doc.metadata.get("source")
+            texts_blocks.append(f"【来源】：{sources}\n{doc.page_content}")
 
-    context = "\n\n".join(texts_blocks)
+        context = "\n\n".join(texts_blocks)
+        if not results:
+            context = ""
+        return {"context": context}
 
-    if not results:
-        return "报意思呀~~未能检索到相关内容喏~~~笔记里暂时没有相关内容捏~~~"
-    else:
-        print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
-        print("RAG检索出来的结果：", context)
+    def answer_node(state):
+        question = state["question"]
+        context = state["context"]
 
-        prompt = f"""
-        请根据下面的内容或者知识,总结性地、详细地回答用户的问题。
-        只能依据"知识内容"回答；如果知识内容不足以回答这个问题，就直说"笔记里没有相关内容"，不许编造。
-        回答结束时单独列一行"参考来源"，只能写它实际引用的【来源】标签里的文件名，没用到的不许写。
-    
-        知识内容：
-        {context}
-    
-        问题：
-        {question}
-        """
+        if not context.strip():
+            return {"answer": "没有找到相关文档捏，无法生成答案喵。"}
+        else:
+            prompt = f"""
+                    请根据下面的内容或者知识,总结性地、详细地回答用户的问题。
+                    只能依据"知识内容"回答；如果知识内容不足以回答这个问题，就直说"笔记里没有相关内容"，不许编造。
+                    回答结束时单独列一行"参考来源"，只能写它实际引用的【来源】标签里的文件名，没用到的不许写。
+                    如果知识内容足以回答，请依据内容回答，并在结束时单独列出"参考来源"，只写你实际引用的文件名。
+                    如果知识内容不足以回答这个问题，请直接回答"笔记里没有相关内容"，且不要输出参考来源。
+                    
+                    知识内容：
+                    {context}
 
-        results_llm = llm.invoke(prompt)
-        return results_llm.content
+                    问题：
+                    {question}
+                    """
+
+            results_llm = llm.invoke(prompt)
+            answer = results_llm.content
+            return {"answer": answer}
+
+    builder = StateGraph(RAGState)
+    builder.add_node("retrieve", retrieve_node)
+    builder.add_node("answer", answer_node)
+
+    builder.add_edge(START, "retrieve")
+    builder.add_edge("retrieve", "answer")
+    builder.add_edge("answer", END)
+
+    return builder.compile()
 
 
 def main():
@@ -134,6 +156,7 @@ def main():
     embeddings = build_embeddings()
     split_docs = load_and_split()
     vector_store = get_vector_store(split_docs, embeddings)
+    graph = build_graph(vector_store, llm)
 
     while True:
 
@@ -143,7 +166,8 @@ def main():
             print("好的喵！感谢使用")
             break
         print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
-        print(rag_answer(answer_sent, vector_store, llm))
+        result = graph.invoke({"question": answer_sent})
+        print(result["answer"])
 
 
 if __name__ == "__main__":
