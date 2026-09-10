@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
+from pathlib import Path
+from fastapi.responses import FileResponse
 
 from app import (
     build_llm,
@@ -30,6 +32,11 @@ class AskResponse(BaseModel):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/")
+def index():
+    return FileResponse(Path(__file__).parent / "static" / "index.html")
 
 
 @app.post("/ask", response_model=AskResponse)
