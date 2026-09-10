@@ -13,6 +13,8 @@ class RAGState(TypedDict):
     question: str
     answer: str
     context: str
+    grade: str
+    router: str
 
 
 def build_llm():
@@ -98,6 +100,35 @@ def get_vector_store(split_docs, embeddings):
 
 
 def build_graph(vector_store, llm):
+
+    def router_decision_node(state):
+        question = state["question"]
+        prompt = f"""
+        你作为一个知识库问答工具的分支路由决策器，根据用户提出的问题，判断用户的问题是需要使用
+        知识库的内容来回答。如果是，则返回“notes”，如果用户只是在问候或闲聊则返回“chat”。
+        无论是何种情况，你都必须而且只能返回一个单一字符串chat 或者 notes。 
+        问题：
+            {question}
+        """
+        router = llm.invoke(prompt).content.strip().lower()
+        if "notes" in router:
+            router = "notes"
+        elif "chat" in router:
+            router = "chat"
+        else:
+            router = "chat"
+        return {"router": router}
+
+    def direct_answer_node(state):
+        question = state["question"]
+        prompt = f"""
+        你是用户的学习助手，友好地回应用户的问题。
+        问题：
+            {question}
+        """
+        answer = llm.invoke(prompt).content
+        return {"answer": answer}
+
     def retrieve_node(state):
         question = state["question"]
 
@@ -105,15 +136,35 @@ def build_graph(vector_store, llm):
             question,
             k=3,
         )
+
+        if not results:  # 空库情况
+            return {"context": ""}
+
         texts_blocks = []
         for doc in results:
             sources = doc.metadata.get("source")
             texts_blocks.append(f"【来源】：{sources}\n{doc.page_content}")
 
         context = "\n\n".join(texts_blocks)
-        if not results:
-            context = ""
         return {"context": context}
+
+    def grade_node(state):
+        question = state["question"]
+        context = state["context"]
+        prompt = f"""
+                你是检索质量评估员，下面是用户问题和检索到的知识内容，判断这些内容是否足以回答问题，
+                只准回答 yes 或 no。
+                知识内容：
+                    {context}
+                问题：
+                    {question}
+                """
+        grade = llm.invoke(prompt).content.strip().lower()
+        if "yes" in grade:
+            grade = "yes"
+        else:
+            grade = "no"
+        return {"grade": grade}
 
     def answer_node(state):
         question = state["question"]
@@ -124,10 +175,9 @@ def build_graph(vector_store, llm):
         else:
             prompt = f"""
                     请根据下面的内容或者知识,总结性地、详细地回答用户的问题。
-                    只能依据"知识内容"回答；如果知识内容不足以回答这个问题，就直说"笔记里没有相关内容"，不许编造。
-                    回答结束时单独列一行"参考来源"，只能写它实际引用的【来源】标签里的文件名，没用到的不许写。
                     如果知识内容足以回答，请依据内容回答，并在结束时单独列出"参考来源"，只写你实际引用的文件名。
                     如果知识内容不足以回答这个问题，请直接回答"笔记里没有相关内容"，且不要输出参考来源。
+                    绝对不准捏造内容。
                     
                     知识内容：
                     {context}
@@ -140,14 +190,43 @@ def build_graph(vector_store, llm):
             answer = results_llm.content
             return {"answer": answer}
 
+    def no_answer_node(state):
+        return {"answer": "抱歉呐，笔记里暂时没有相关内容喵~"}
+
     builder = StateGraph(RAGState)
+    builder.add_node("router", router_decision_node)
+    builder.add_node("direct_answer", direct_answer_node)
     builder.add_node("retrieve", retrieve_node)
+    builder.add_node("grade", grade_node)
     builder.add_node("answer", answer_node)
+    builder.add_node("no_answer", no_answer_node)
 
-    builder.add_edge(START, "retrieve")
-    builder.add_edge("retrieve", "answer")
+    def grade_decision(state):
+        return state["grade"]
+
+    def router_decision(state):
+        return state["router"]
+
+    builder.add_edge(START, "router")
+    builder.add_conditional_edges(
+        "router",
+        router_decision,
+        {"notes": "retrieve",
+         "chat": "direct_answer",
+         }
+    )
+    builder.add_edge("retrieve", "grade")
+    builder.add_conditional_edges(
+        "grade",
+        grade_decision,
+        {"yes": "answer",
+         "no": "no_answer",
+         }
+    )
+
     builder.add_edge("answer", END)
-
+    builder.add_edge("no_answer", END)
+    builder.add_edge("direct_answer", END)
     return builder.compile()
 
 
