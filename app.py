@@ -7,6 +7,9 @@ from langchain_core.documents import Document
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from typing import TypedDict
 from langgraph.graph import StateGraph, START, END
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 class RAGState(TypedDict):
@@ -19,18 +22,18 @@ class RAGState(TypedDict):
 
 def build_llm():
     LLM_1 = ChatOpenAI(
-        model="qwen-max",
+        model=os.getenv("CHAT_MODEL"),
         api_key=os.getenv("DASHSCOPE_API_KEY"),
-        base_url="https://ws-k66usu35y908m0bq.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+        base_url=os.getenv("DASHSCOPE_BASE_URL"),
     )
     return LLM_1
 
 
 def build_embeddings():
     llm_embeddings = OpenAIEmbeddings(
-        model="qwen3.7-text-embedding",
+        model=os.getenv("EMBEDDING_MODEL"),
         api_key=os.getenv("DASHSCOPE_API_KEY"),
-        base_url="https://ws-k66usu35y908m0bq.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+        base_url=os.getenv("DASHSCOPE_BASE_URL"),
         check_embedding_ctx_length=False,
     )
     return llm_embeddings
